@@ -237,6 +237,18 @@ struct sData {
 	vector<vector<double>> loglikelihood_leftRegions;
 	vector<vector<double>> loglikelihood_rightRegions;
 
+	vector<vector<int>> mainBranchNodeIds_leftRegions;
+	vector<vector<int>> mainBranchNodeIds_rightRegions;
+
+	// for viterbi
+	vector<size_t> result_ids_left;
+	vector<double> result_costs;
+
+	vector<size_t> result_ids_right;
+	vector<double> result_costs_right;
+
+
+
 };
 
 
@@ -314,6 +326,14 @@ struct extras {
 	vector<double> standardDeviationLeft;
 	vector<double> standardDeviationRight;
 };
+
+// struct sRegularization{
+// 	queue<pair<int, int>> left_bfs_que;
+// 	map<int, bool> left_bfs_visited;
+// 	vector<int> left_node_order;
+// 	vector<int> right_node_order;
+// 	map<int, bool> on_queue_left;
+// };
 
 
 

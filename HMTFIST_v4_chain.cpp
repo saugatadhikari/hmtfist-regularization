@@ -8,6 +8,7 @@
 #define MESSAGEHIGH 10000
 #define PIXELLIMT 3000
 #define MAXCOST -1000.0
+#define MAXGAIN INFINITY
 
 #define EB 2  //1 use max cost for identifying effective branches 0 use chain length
 #define BOUNDARY_NODES_OBSERVED 2   // 0 does not exclude any branches // 1 consider pits and tree and unobserved and exclude those branches // 2 excludes branches if the boundary of flood and dry is overlapping with pits layer
@@ -46,7 +47,7 @@ using namespace std;
 float SUM_COST = 0.0;
 int COUNTER = 0;
 
-//std::map<int, int> nodeIndexMap;
+std::map<int, int> nodeIndexMap;
 
 
 class cFlood {
@@ -163,10 +164,15 @@ public:
 	// get left and right nodes order
 	void getNodeOrder(queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, vector<int> &left_node_order, map<int, bool> &on_queue);
 	int reachBFS(queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, vector<int> &left_node_order, map<int, bool> &on_queue); // for black nodes
-	void brokenBFS(int curr_node, queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, map<int, bool> &on_queue); // after the chain is broken
+	void brokenBFS(int last_node, queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, map<int, bool> &on_queue); // after the chain is broken
 
 	// log likelihood regularization
 	void getLoglikelihood();
+
+	// viterbi algorithm
+	void viterbi();
+	
+	void saveExtraInfo();
 
 	// clear all the vectors
 	void clear_all();
@@ -1235,7 +1241,6 @@ vector<int> cFlood::getBFSOrder(int root, vector<int>& bfsVisited, int bank) {
 }
 
 
-// NOTE: for North Carolina, I am just using Right to represent everything, left is not used
 
 void cFlood::input(int argc, char* argv[]) {
 	cout << "argc: " << argc << endl;
@@ -1442,7 +1447,7 @@ void cFlood::input(int argc, char* argv[]) {
 		std::cout << "wrong parameter" << endl;
 	}
 
-	std::cout << "Input parameters:" << endl << "Epsilon: " << parameter.Epsilon << " Pi: " << parameter.Pi << endl;
+	std::cout << "Input parameters:" << endl << "Reach Id:" << parameter.reachId << "Epsilon: " << parameter.Epsilon << " Pi: " << parameter.Pi << endl;
 	cout << "rho: " << parameter.rho << endl;
 
 
@@ -1463,7 +1468,7 @@ void cFlood::input(int argc, char* argv[]) {
 
 	// Fill in the data values in the tree
 	int nodeIdCounter = 0;
-	std::map<int, int> nodeIndexMap;
+// 	std::map<int, int> nodeIndexMap;
 	int NCOLS = dims[1];
 	int NROWS = dims[0];
 
@@ -1713,16 +1718,146 @@ void cFlood::input(int argc, char* argv[]) {
 	//}
 
 	// CHECK: get left and right bank source nodes in order of stream
-	map<int, bool> bfs_visited;
+	std::map<int, bool> bfs_visited;
 	int tmp_node_id;
 	queue<pair<int, int>> bfs_que;
-	map<int, bool> on_queue;
-// 	vector<int> node_order;
+	std::map<int, bool> on_queue;
+	vector<int> node_order;
     vector<int> left_node_order;
     vector<int> right_node_order;
 		
 	
+	for (int row = 0; row < parameter.ROW; row++){
+		for (int col = 0; col < parameter.COLUMN; col++){
+		    int node_id_curr = row * parameter.COLUMN + col;
+		    // skip nodes not in the river
+		    if (!data.reach_ids_orig_map[node_id_curr] && !data.river_ids_map[node_id_curr]){
+		        continue;
+		    }
+		    
+		    
+		    tmp_node_id = row * parameter.COLUMN + col;
+  
+		    if (bfs_visited.find(tmp_node_id) != bfs_visited.end()){
+		        continue;
+		    }
+		    
+		    bfs_que.push(make_pair(row, col));
+		    bfs_visited[tmp_node_id] = true;
+		    on_queue[tmp_node_id] = true;
+		    
+		    while (!bfs_que.empty()){
+		        pair<int, int> curr_node = bfs_que.front();
+		        int i = curr_node.first;
+		        int j = curr_node.second;
+		        
+		        int idx = i * parameter.COLUMN + j;
+
+		        bfs_visited[idx] = true;
+		        node_order.push_back(idx);
+		        bfs_que.pop();
+		        
+		        int l, r;
+		        for (l=-1; l<2; l++){
+		            for (r=-1; r<2; r++){
+		                if (l == 0 && r == 0){
+		                    continue;
+		                }
+		                
+		                int i_nei = i+l;
+		                int j_nei = j+r; // get the neighboring x and y
+
+                        // check for boundary cases
+                        if (i_nei < 0 || j_nei < 0 || j_nei >= parameter.COLUMN || i_nei >= parameter.ROW){
+                            continue;
+                        }
+    
+                        // check if already visited or not
+                        int neigh_node_id = i_nei * parameter.COLUMN + j_nei;
+                        
+                        if (bfs_visited.find(neigh_node_id) != bfs_visited.end()){
+                            continue;
+                        }
+                        
+                        if (on_queue.find(neigh_node_id) != on_queue.end()){
+                            continue;
+                        }
+                        
+                        if (data.reach_ids_orig_map[neigh_node_id] || data.river_ids_map[neigh_node_id]){
+                            on_queue[neigh_node_id] = true;
+            		        bfs_que.push(make_pair(i_nei, j_nei));
+            		    }
+                                    
+		            }
+		                
+		        }
+		    }
+		    
+		}
+	}
+	
+	cout << "left bank nodes size: " << data.leftBankNodes.size() << endl;
+
+//     ofstream leftnodesQ;
+// 	leftnodesQ.open(CTOutputLocation + parameter.reachId + "_LeftNodesQ.txt");
+
+
+// 	// Try chain Idea
 // 	// Left Bank
+// 	bool leftNodeFound = false;
+// 	int currLeftNode;
+// 	for (int row = 0; row < parameter.ROW; row++){
+// 		for (int col = 0; col < parameter.COLUMN; col++){
+// 		    int node_id_curr = row * parameter.COLUMN + col;
+
+// 			tmp_node_id = row * parameter.COLUMN + col;
+		    
+// 		    // skip nodes not on left side
+// 		    if (!data.leftBankNodes[tmp_node_id]){
+// 		        continue;
+// 		    }
+
+// 		    // skip nodes not in the river
+// 		    if (data.reach_ids_orig_map[node_id_curr]){
+// 				currLeftNode = node_id_curr;
+// 				leftNodeFound = true;
+// 		        break;
+// 		    }
+// 		}
+// 		if (leftNodeFound){
+// 			break;
+// 		}
+// 	}
+
+// 	if (leftNodeFound){
+// 		int row = (int)(currLeftNode / parameter.COLUMN);
+// 		int col = currLeftNode % parameter.COLUMN;
+
+// 		bfs_que.push(make_pair(row, col));
+// 		on_queue.insert(make_pair(currLeftNode, true));
+// 		getNodeOrder(bfs_que, bfs_visited, left_node_order, on_queue);
+// 	}
+
+// 	// data.leftbfsOrder[leftOrder].size()
+
+// 	for (int i = 0; i < left_node_order.size(); i++){
+// 	    int tmp_node_ = left_node_order[i];
+// 	    if (data.river_ids_map[tmp_node_]){
+// 	        continue;
+// 	    }
+// 	    data.leftNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
+
+// 	}
+
+// 	cout << "Left nodes size: " << data.leftNodesInOrder.size() << endl;
+
+// 	return;
+	
+
+
+
+
+//     // Left Bank
 // 	for (int row = 0; row < parameter.ROW; row++){
 // 		for (int col = 0; col < parameter.COLUMN; col++){
 // 		    double node_id_curr = row * parameter.COLUMN + col;
@@ -1731,10 +1866,91 @@ void cFlood::input(int argc, char* argv[]) {
 // 		        continue;
 // 		    }
 		    
-// 		    // skip nodes not on left side
+// 		    tmp_node_id = row * parameter.COLUMN + col;
 		    
+// 		    // skip nodes not on left side
+// 		    if (!data.leftBankNodes[tmp_node_id]){
+// 		        continue;
+// 		    }
+		    
+// 		    if (bfs_visited[tmp_node_id]){
+// 		        continue;
+// 		    }
+		    
+// 		    bfs_que.push(make_pair(row, col));
+// 		    bfs_visited.insert(make_pair(tmp_node_id, true));
+// 		    on_queue.insert(make_pair(tmp_node_id, true));
+		    
+// 		    leftnodesQ << " " << tmp_node_id << " ";
+		    
+// 		    while (!bfs_que.empty()){
+// 		        pair<int, int> curr_node = bfs_que.front();
+// 		        int i = curr_node.first;
+// 		        int j = curr_node.second;
+		        
+// 		        int idx = i * parameter.COLUMN + j;
+// 		        bfs_visited.insert(make_pair(idx, true));
+// 		        left_node_order.push_back(idx);
+// 		        bfs_que.pop();
+		        
+// 		        for (int l=-1; l<2; l++){
+// 		            for (int r=-1; r<2; r++){
+// 		                if (l == 0 && r == 0){
+// 		                    continue;
+// 		                }
+		                
+// 		                int i_nei, j_nei = (i+l, j+r); // get the neighboring x and y
+
+//                         // check for boundary cases
+//                         if (i_nei < 0 || j_nei < 0 || j_nei >= parameter.COLUMN || i_nei >= parameter.ROW){
+//                             continue;
+//                         }
+    
+//                         // check if already visited or not
+//                         int neigh_node_id = i_nei * parameter.COLUMN + j_nei;
+                        
+//                         // skip nodes not on left side
+//                         if (!data.leftBankNodes[neigh_node_id]){
+//             		        continue;
+//             		    }
+		    
+//                         if (bfs_visited[neigh_node_id]){
+//                             continue;
+//                         }
+                        
+//                         if ((data.reach_ids_orig_map[neigh_node_id] || data.river_ids_map[neigh_node_id]) && (!on_queue[neigh_node_id])){
+//             		        bfs_que.push(make_pair(i_nei, j_nei));
+//             		        on_queue.insert(make_pair(neigh_node_id, true));
+            		        
+//             		        leftnodesQ << " " << neigh_node_id << " ";
+//             		    }
+                                    
+// 		            }
+		                
+// 		        }
+// 		    }
+		    
+// 		}
+// 	}
+	
+// 	leftnodesQ.close();
+	
+// 	// Right Bank
+// 	for (int row = 0; row < parameter.ROW; row++){
+// 		for (int col = 0; col < parameter.COLUMN; col++){
+// 		    double node_id_curr = row * parameter.COLUMN + col;
+// 		    // skip nodes not in the river
+// 		    if (!data.reach_ids_orig_map[node_id_curr] && !data.river_ids_map[node_id_curr]){
+// 		        continue;
+// 		    }
 		    
 // 		    tmp_node_id = row * parameter.COLUMN + col;
+		    
+// 		    // skip nodes not on left side
+// 		    if (data.leftBankNodes[tmp_node_id]){
+// 		        continue;
+// 		    }
+		    
 // 		    if (bfs_visited[tmp_node_id]){
 // 		        continue;
 // 		    }
@@ -1750,11 +1966,11 @@ void cFlood::input(int argc, char* argv[]) {
 		        
 // 		        int idx = i * parameter.COLUMN + j;
 // 		        bfs_visited.insert(make_pair(idx, true));
-// 		        node_order.push_back(idx);
+// 		        right_node_order.push_back(idx);
 // 		        bfs_que.pop();
 		        
 // 		        for (int l=-1; l<2; l++){
-// 		            for (int r=-1; l<2; l++){
+// 		            for (int r=-1; r<2; r++){
 // 		                if (l == 0 && r == 0){
 // 		                    continue;
 // 		                }
@@ -1768,6 +1984,12 @@ void cFlood::input(int argc, char* argv[]) {
     
 //                         // check if already visited or not
 //                         int neigh_node_id = i_nei * parameter.COLUMN + j_nei;
+                        
+//                         // skip nodes not on left side
+//                         if (data.leftBankNodes[neigh_node_id]){
+//             		        continue;
+//             		    }
+		    
 //                         if (bfs_visited[neigh_node_id]){
 //                             continue;
 //                         }
@@ -1785,217 +2007,6 @@ void cFlood::input(int argc, char* argv[]) {
 // 		}
 // 	}
 	
-// 	cout << "left bank nodes size: " << data.leftBankNodes.size() << endl;
-
-    ofstream leftnodesQ;
-	leftnodesQ.open(CTOutputLocation + parameter.reachId + "_LeftNodesQ.txt");
-
-
-	// Try chain Idea
-	// Left Bank
-	bool leftNodeFound = false;
-	double currLeftNode;
-	for (int row = 0; row < parameter.ROW; row++){
-		for (int col = 0; col < parameter.COLUMN; col++){
-		    double node_id_curr = row * parameter.COLUMN + col;
-
-			tmp_node_id = row * parameter.COLUMN + col;
-		    
-		    // skip nodes not on left side
-		    if (!data.leftBankNodes[tmp_node_id]){
-		        continue;
-		    }
-
-		    // skip nodes not in the river
-		    if (data.reach_ids_orig_map[node_id_curr]){
-				currLeftNode = node_id_curr;
-				leftNodeFound = true;
-		        break;
-		    }
-		}
-		if (leftNodeFound){
-			break;
-		}
-	}
-
-	if (leftNodeFound){
-		int row = (int)(currLeftNode / parameter.COLUMN);
-		int col = currLeftNode % parameter.COLUMN;
-
-		bfs_que.push(make_pair(row, col));
-		on_queue.insert(make_pair(currLeftNode, true));
-		getNodeOrder(bfs_que, bfs_visited, left_node_order, on_queue);
-	}
-
-	// data.leftbfsOrder[leftOrder].size()
-
-	for (int i = 0; i < left_node_order.size(); i++){
-	    int tmp_node_ = left_node_order[i];
-	    if (data.river_ids_map[tmp_node_]){
-	        continue;
-	    }
-	    data.leftNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
-
-	}
-
-	cout << "Left nodes size: " << data.leftNodesInOrder.size() << endl;
-
-	return;
-	
-
-
-
-
-    // Left Bank
-	for (int row = 0; row < parameter.ROW; row++){
-		for (int col = 0; col < parameter.COLUMN; col++){
-		    double node_id_curr = row * parameter.COLUMN + col;
-		    // skip nodes not in the river
-		    if (!data.reach_ids_orig_map[node_id_curr] && !data.river_ids_map[node_id_curr]){
-		        continue;
-		    }
-		    
-		    tmp_node_id = row * parameter.COLUMN + col;
-		    
-		    // skip nodes not on left side
-		    if (!data.leftBankNodes[tmp_node_id]){
-		        continue;
-		    }
-		    
-		    if (bfs_visited[tmp_node_id]){
-		        continue;
-		    }
-		    
-		    bfs_que.push(make_pair(row, col));
-		    bfs_visited.insert(make_pair(tmp_node_id, true));
-		    on_queue.insert(make_pair(tmp_node_id, true));
-		    
-		    leftnodesQ << " " << tmp_node_id << " ";
-		    
-		    while (!bfs_que.empty()){
-		        pair<int, int> curr_node = bfs_que.front();
-		        int i = curr_node.first;
-		        int j = curr_node.second;
-		        
-		        int idx = i * parameter.COLUMN + j;
-		        bfs_visited.insert(make_pair(idx, true));
-		        left_node_order.push_back(idx);
-		        bfs_que.pop();
-		        
-		        for (int l=-1; l<2; l++){
-		            for (int r=-1; l<2; l++){
-		                if (l == 0 && r == 0){
-		                    continue;
-		                }
-		                
-		                int i_nei, j_nei = (i+l, j+r); // get the neighboring x and y
-
-                        // check for boundary cases
-                        if (i_nei < 0 || j_nei < 0 || j_nei >= parameter.COLUMN || i_nei >= parameter.ROW){
-                            continue;
-                        }
-    
-                        // check if already visited or not
-                        int neigh_node_id = i_nei * parameter.COLUMN + j_nei;
-                        
-                        // skip nodes not on left side
-                        if (!data.leftBankNodes[neigh_node_id]){
-            		        continue;
-            		    }
-		    
-                        if (bfs_visited[neigh_node_id]){
-                            continue;
-                        }
-                        
-                        if ((data.reach_ids_orig_map[neigh_node_id] || data.river_ids_map[neigh_node_id]) && (!on_queue[neigh_node_id])){
-            		        bfs_que.push(make_pair(i_nei, j_nei));
-            		        on_queue.insert(make_pair(neigh_node_id, true));
-            		        
-            		        leftnodesQ << " " << neigh_node_id << " ";
-            		    }
-                                    
-		            }
-		                
-		        }
-		    }
-		    
-		}
-	}
-	
-	leftnodesQ.close();
-	
-	// Right Bank
-	for (int row = 0; row < parameter.ROW; row++){
-		for (int col = 0; col < parameter.COLUMN; col++){
-		    double node_id_curr = row * parameter.COLUMN + col;
-		    // skip nodes not in the river
-		    if (!data.reach_ids_orig_map[node_id_curr] && !data.river_ids_map[node_id_curr]){
-		        continue;
-		    }
-		    
-		    tmp_node_id = row * parameter.COLUMN + col;
-		    
-		    // skip nodes not on left side
-		    if (data.leftBankNodes[tmp_node_id]){
-		        continue;
-		    }
-		    
-		    if (bfs_visited[tmp_node_id]){
-		        continue;
-		    }
-		    
-		    bfs_que.push(make_pair(row, col));
-		    bfs_visited.insert(make_pair(tmp_node_id, true));
-		    on_queue.insert(make_pair(tmp_node_id, true));
-		    
-		    while (!bfs_que.empty()){
-		        pair<int, int> curr_node = bfs_que.front();
-		        int i = curr_node.first;
-		        int j = curr_node.second;
-		        
-		        int idx = i * parameter.COLUMN + j;
-		        bfs_visited.insert(make_pair(idx, true));
-		        right_node_order.push_back(idx);
-		        bfs_que.pop();
-		        
-		        for (int l=-1; l<2; l++){
-		            for (int r=-1; l<2; l++){
-		                if (l == 0 && r == 0){
-		                    continue;
-		                }
-		                
-		                int i_nei, j_nei = (i+l, j+r); // get the neighboring x and y
-
-                        // check for boundary cases
-                        if (i_nei < 0 || j_nei < 0 || j_nei >= parameter.COLUMN || i_nei >= parameter.ROW){
-                            continue;
-                        }
-    
-                        // check if already visited or not
-                        int neigh_node_id = i_nei * parameter.COLUMN + j_nei;
-                        
-                        // skip nodes not on left side
-                        if (data.leftBankNodes[neigh_node_id]){
-            		        continue;
-            		    }
-		    
-                        if (bfs_visited[neigh_node_id]){
-                            continue;
-                        }
-                        
-                        if ((data.reach_ids_orig_map[neigh_node_id] || data.river_ids_map[neigh_node_id]) && (!on_queue[neigh_node_id])){
-            		        bfs_que.push(make_pair(i_nei, j_nei));
-            		        on_queue.insert(make_pair(neigh_node_id, true));
-            		    }
-                                    
-		            }
-		                
-		        }
-		    }
-		    
-		}
-	}
-	
 	cout << "left bank nodes size: " << data.leftBankNodes.size() << endl;
 	
 	cout << "12021141 original id: " << data.allNodes[12021141]->originalId << endl;
@@ -2005,40 +2016,40 @@ void cFlood::input(int argc, char* argv[]) {
 	// get left and right
 	
 	
-// 	for (int i = 0; i < node_order.size(); i++){
-// 	    int tmp_node_ = node_order[i];
+	for (int i = 0; i < node_order.size(); i++){
+	    int tmp_node_ = node_order[i];
+	    if (data.river_ids_map[tmp_node_]){
+	        continue;
+	    }
+	    
+	    if (data.leftBankNodes[tmp_node_]){
+	        data.leftNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
+	    }
+	    else{
+	        data.rightNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
+	    }
+	}
+
+//     for (int i = 0; i < left_node_order.size(); i++){
+// 	    int tmp_node_ = left_node_order[i];
 // 	    if (data.river_ids_map[tmp_node_]){
 // 	        continue;
 // 	    }
-	    
-// 	    if (data.leftBankNodes[tmp_node_]){
-// 	        data.leftNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
-// 	    }
-// 	    else{
-// 	        data.rightNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
-// 	    }
+// 	    data.leftNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
+
 // 	}
-
-    for (int i = 0; i < left_node_order.size(); i++){
-	    int tmp_node_ = left_node_order[i];
-	    if (data.river_ids_map[tmp_node_]){
-	        continue;
-	    }
-	    data.leftNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
-
-	}
 	
-	 for (int i = 0; i < right_node_order.size(); i++){
-	    int tmp_node_ = right_node_order[i];
-	    if (data.river_ids_map[tmp_node_]){
-	        continue;
-	    }
-	    data.rightNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
-	}
+// 	 for (int i = 0; i < right_node_order.size(); i++){
+// 	    int tmp_node_ = right_node_order[i];
+// 	    if (data.river_ids_map[tmp_node_]){
+// 	        continue;
+// 	    }
+// 	    data.rightNodesInOrder.push_back(nodeIndexMap[tmp_node_]);
+// 	}
 	
-// 	cout << "Node order size: " << node_order.size() << endl;
-    cout << "Left Node order size: " << left_node_order.size() << endl;
-    cout << "Right Node order size: " << right_node_order.size() << endl;
+	cout << "Node order size: " << node_order.size() << endl;
+    // cout << "Left Node order size: " << left_node_order.size() << endl;
+    // cout << "Right Node order size: " << right_node_order.size() << endl;
 	
 	cout << "Left nodes size: " << data.leftNodesInOrder.size() << endl;
 	cout << "Right nodes size: " << data.rightNodesInOrder.size() << endl;
@@ -2647,23 +2658,23 @@ void cFlood::input(int argc, char* argv[]) {
 	
 	
 	
-	map<int, bool> large_regions;
+// 	map<int, bool> large_regions;
 	map<int, int> id2idx;
 	for (int i = 0; i < data.leftNodesInOrder.size(); i++) {
 	    id2idx.insert(make_pair(data.leftNodesInOrder[i], i));
 		if (data.inferedmaxCostLeft[i] > 0) {
-		    large_regions.insert(make_pair(data.leftNodesInOrder[i], true));
+		    data.large_regions.insert(make_pair(data.leftNodesInOrder[i], true));
 		}
 	}
 
 	for (int i = 0; i < data.rightNodesInOrder.size(); i++) {
 	    id2idx.insert(make_pair(data.rightNodesInOrder[i], i));
 		if (data.inferedmaxCostRight[i] > 0) {
-		    large_regions.insert(make_pair(data.rightNodesInOrder[i], true));
+		    data.large_regions.insert(make_pair(data.rightNodesInOrder[i], true));
 		}
 	}
 	
-	cout << "Large Regions size: " << large_regions.size() << endl;
+	cout << "Large Regions size: " << data.large_regions.size() << endl;
 	cout << "Left Nodes in Order: " << endl;
 	
 	for (int i=0; i<data.leftNodesInOrder.size(); i++){
@@ -2674,7 +2685,7 @@ void cFlood::input(int argc, char* argv[]) {
 	    data.inferedmaxCost_id2cost.insert(make_pair(data.leftNodesInOrder[i], cost_));
 	    // data.inferedmaxCostLeft_idx2id.insert(make_pair(i, data.leftNodesInOrder[i]));
 	    
-	    if (large_regions[data.leftNodesInOrder[i]]){
+	    if (data.large_regions[data.leftNodesInOrder[i]]){
 	        cout << data.leftNodesInOrder[i] << endl;
 	        data.leftNodesInCorrectOrder.push_back(data.leftNodesInOrder[i]);
 	    }
@@ -2690,7 +2701,7 @@ void cFlood::input(int argc, char* argv[]) {
 	    data.inferedmaxCost_id2cost.insert(make_pair(data.rightNodesInOrder[i], cost_));
 	    // data.inferedmaxCostRight_idx2id.insert(make_pair(i, data.rightNodesInOrder[i]));
 	    
-	    if (large_regions[data.rightNodesInOrder[i]]){
+	    if (data.large_regions[data.rightNodesInOrder[i]]){
 	        cout << data.rightNodesInOrder[i] << endl;
 	        data.rightNodesInCorrectOrder.push_back(data.rightNodesInOrder[i]);
 	    }
@@ -2748,12 +2759,14 @@ void cFlood::input(int argc, char* argv[]) {
 	// TODO: check, calculate loglikelihood for regularization
 	getLoglikelihood();
 	for (int i=0; i<2; i++){
-		cout << "i: " << data.leftNodesInOrder[i] << endl;
+		cout << "i: " << data.leftNodesInCorrectOrder[i] << endl;
 		cout << "loglikelihood: " << endl;
 		for(int j=0; j<10; j++){
 			cout << data.loglikelihood_leftRegions[i][j] << endl;
 		}
 	}
+	
+	viterbi();
 
 
 	auto end = std::chrono::system_clock::now();
@@ -2761,6 +2774,8 @@ void cFlood::input(int argc, char* argv[]) {
 
 	std::cout << "Inference Finished. Duration: " << elapsed_seconds.count() << endl << endl;
 	output();
+	
+	saveExtraInfo();
 
 }
 
@@ -2774,8 +2789,8 @@ void cFlood::input(int argc, char* argv[]) {
 
 
 void cFlood::getNodeOrder(queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, vector<int> &left_node_order, map<int, bool> &on_queue){
-	int curr_node = reachBFS(bfs_que, bfs_visited, left_node_order, on_queue);
-	brokenBFS(curr_node, bfs_que, bfs_visited, on_queue);
+	int last_node = reachBFS(bfs_que, bfs_visited, left_node_order, on_queue);
+	brokenBFS(last_node, bfs_que, bfs_visited, on_queue);
 	if (bfs_que.empty()){
 		return;
 	}
@@ -2787,22 +2802,26 @@ void cFlood::getNodeOrder(queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_vi
 }
 
 int cFlood::reachBFS(queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, vector<int> &left_node_order, map<int, bool> &on_queue){
+	int last_node;
 	while (!bfs_que.empty()){
 		pair<int, int> curr_node = bfs_que.front();
+
 		int i = curr_node.first;
 		int j = curr_node.second;
 		
 		int idx = i * parameter.COLUMN + j;
+		last_node = idx;
 		bfs_visited.insert(make_pair(idx, true));
 
 		if(data.reach_ids_orig_map[idx]){
+		  //  cout << "leftttt: " << idx << endl;
 			left_node_order.push_back(idx);
 		}
 		
 		bfs_que.pop();
 		
 		for (int l=-1; l<2; l++){
-			for (int r=-1; l<2; l++){
+			for (int r=-1; r<2; r++){
 				if (l == 0 && r == 0){
 					continue;
 				}
@@ -2834,18 +2853,18 @@ int cFlood::reachBFS(queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited
 		}
 	}
 
-	return curr_node;
+	return last_node;
 }
 
-void cFlood::brokenBFS(int curr_node, queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, map<int, bool> &on_queue){
+void cFlood::brokenBFS(int next_node, queue<pair<int, int>> &bfs_que, map<int, bool> &bfs_visited, map<int, bool> &on_queue){
 	// after the chain is broken
-	pair<int, int> next_node = curr_node;
-	int i = next_node.first;
-	int j = next_node.second;
-	
-	int idx = i * parameter.COLUMN + j;
+	int idx = next_node;
+	cout << "next: " << idx << endl;
+	int i = (int)(next_node / parameter.COLUMN);
+	int j = next_node % parameter.COLUMN;
+
 	for (int l=-1; l<2; l++){
-		for (int r=-1; l<2; l++){
+		for (int r=-1; r<2; r++){
 			if (l == 0 && r == 0){
 				continue;
 			}
@@ -2860,14 +2879,20 @@ void cFlood::brokenBFS(int curr_node, queue<pair<int, int>> &bfs_que, map<int, b
 			// check if already visited or not
 			int neigh_node_id = i_nei * parameter.COLUMN + j_nei;
 			
+// 			cout << "here1: " << neigh_node_id << endl;
+			
 			// skip nodes not on left side
 			if (!data.leftBankNodes[neigh_node_id]){
 				continue;
 			}
+			
+// 			cout << "here2: " << neigh_node_id << endl;
 
 			if (bfs_visited[neigh_node_id]){
 				continue;
 			}
+			
+// 			cout << "here3: " << neigh_node_id << endl;
 			
 			if ((data.reach_ids_orig_map[neigh_node_id] || data.river_ids_map[neigh_node_id]) && (!on_queue[neigh_node_id])){
 				bfs_que.push(make_pair(i_nei, j_nei));
@@ -6032,7 +6057,7 @@ void cFlood::updateMapPrediction_left_hmt() {
 			}
 		}
 
-		cout << "leafnodes collected: " << leafnodes.size() << endl;
+// 		cout << "leafnodes collected: " << leafnodes.size() << endl;
 
 		// maintain a vector of nodeId whose cost we already summed up
 		vector<float> visited_nodes;
@@ -6125,7 +6150,7 @@ void cFlood::updateMapPrediction_left_hmt() {
 		// }
 
 		// new approach
-		cout << "traverse from reach node to root" << endl;
+// 		cout << "traverse from reach node to root" << endl;
 		int nodeId = data.leftNodesInOrder[leftOrder];
 		int parentId = nodeId;
 		double maxCostFrontierNode = -1;
@@ -6192,7 +6217,7 @@ void cFlood::updateMapPrediction_left_hmt() {
 
 		if (COUNTER > 0) boundary_cost = SUM_COST / COUNTER;
 
-		cout << "counter: " << COUNTER << endl;
+// 		cout << "counter: " << COUNTER << endl;
 		cout << "boundary cost: " << boundary_cost << endl;
 
 		// if all the nodes are flooded for a region; get max cost among flooded
@@ -6205,6 +6230,7 @@ void cFlood::updateMapPrediction_left_hmt() {
 // 		data.inferredFloodFrontier[leftOrder] = frontierNode; 
         data.inferredFloodFrontier_regionId2Cost.insert(make_pair(data.leftNodesInOrder[leftOrder], boundary_cost));
 		data.inferredFloodFrontier_regionId2nodeId.insert(make_pair(data.leftNodesInOrder[leftOrder], frontierNode));
+		data.inferredFloodFrontier_regionId2Size.insert(make_pair(data.leftNodesInOrder[leftOrder], data.leftbfsOrder[leftOrder].size()));
 
 		std::cout << "->" << data.inferedmaxCostLeft[leftOrder] << endl;
 		costs_left << endl;
@@ -6213,6 +6239,7 @@ void cFlood::updateMapPrediction_left_hmt() {
 	}
 	costs_left.close();
 	cout << "Leftbank inference finished" << endl;
+	cout << "#################################" << endl;
 }
 
 
@@ -6355,7 +6382,7 @@ void cFlood::updateMapPrediction_right_hmt() {
 			}
 		}
 
-		cout << "leafnodes collected: " << leafnodes.size() << endl;
+// 		cout << "leafnodes collected: " << leafnodes.size() << endl;
 
 		// maintain a vector of nodeId whose cost we already summed up
 		vector<float> visited_nodes;
@@ -6448,7 +6475,7 @@ void cFlood::updateMapPrediction_right_hmt() {
 		// }
 
 		// new approach
-		cout << "traverse from reach node to root" << endl;
+// 		cout << "traverse from reach node to root" << endl;
 		int nodeId = data.rightNodesInOrder[rightOrder];
 		int parentId = nodeId;
 		double maxCostFrontierNode = -1;
@@ -6515,7 +6542,7 @@ void cFlood::updateMapPrediction_right_hmt() {
 
 		if (COUNTER > 0) boundary_cost = SUM_COST / COUNTER;
 
-		cout << "counter: " << COUNTER << endl;
+// 		cout << "counter: " << COUNTER << endl;
 		cout << "boundary cost: " << boundary_cost << endl;
 
 		// if all the nodes are flooded for a region; get max cost among flooded
@@ -6528,6 +6555,7 @@ void cFlood::updateMapPrediction_right_hmt() {
 // 		data.inferredFloodFrontier[rightOrder] = frontierNode; 
         data.inferredFloodFrontier_regionId2Cost.insert(make_pair(data.rightNodesInOrder[rightOrder], boundary_cost));
 		data.inferredFloodFrontier_regionId2nodeId.insert(make_pair(data.rightNodesInOrder[rightOrder], frontierNode));
+		data.inferredFloodFrontier_regionId2Size.insert(make_pair(data.rightNodesInOrder[rightOrder], data.rightbfsOrder[rightOrder].size()));
 
 		std::cout << "->" << data.inferedmaxCostRight[rightOrder] << endl;
 		costs_right << endl;
@@ -7988,11 +8016,8 @@ void cFlood::getOriginIdBanks_effectiveBranches() {
 // Output:	The vector of the loglikelihood for every frontier nodes in one region.
 // Global parameter: rho and Pi. In code, the names are parameter.Pi and parameter.rho. Please modify the names of these parameters
 void cFlood::getLoglikelihood(){
-	parameter.Pi = 0.3;
+	parameter.Pi = 0.5;
 	parameter.rho = 0.5;
-
-	cout << "pi: " << parameter.Pi << endl;
-	cout << "rho: " << parameter.rho << endl;
 	
 	// Left Bank
 	for (int leftOrder = 0; leftOrder < data.leftbfsOrder.size(); leftOrder++) {
@@ -8001,12 +8026,9 @@ void cFlood::getLoglikelihood(){
 		//Calculate Gain
 		double curWaterProb, curDryProb, curMaxGain = 0;
 		vector<double> loglikelihood;
+		vector<int> mainBranchNodeIds;
 
 		double curGain = 0;
-
-		//define temporary variables
-		// int curIdx = -1, newIdx = -1;
-		// Node* curNode = NULL;
 
 		if (!data.hasObservedPixelsLeft[leftOrder] || data.leftbfsOrder[leftOrder].size() < PIXELLIMT) {
 			continue;
@@ -8017,7 +8039,7 @@ void cFlood::getLoglikelihood(){
 
 		while (data.allNodes[curNode]->childrenID.size() != 0) { 
 			if (data.allNodes[curNode]->isNa == 1){
-				curDryProb = eln_ll(0.5); // TODO: check this, in fist I use 0.3/0.7
+				curDryProb = eln_ll(0.5); 
 				curWaterProb = eln_ll(0.5);
 			}
 			else{
@@ -8025,16 +8047,16 @@ void cFlood::getLoglikelihood(){
 				curWaterProb = eln_ll(data.allNodes[curNode]->p);
 			}
 
-			curGain = curDryProb + eln_ll(1 - parameter.Pi);
+			curGain = curDryProb - eln_ll(1 - parameter.Pi);
 			
-			initialLog += curGain; // TODO: check with Yupu; why + initialLog?
+			initialLog += curGain; 
 			curNode = data.allNodes[curNode]->childrenID[0];
 		}
 
 		curNode = data.leftNodesInOrder[leftOrder];
 		while (data.allNodes[curNode]->childrenID.size() != 0) { 
 			if (data.allNodes[curNode]->isNa == 1){
-				curDryProb = eln_ll(0.5); // TODO: check this, in fist I use 0.3/0.7
+				curDryProb = eln_ll(0.5); 
 				curWaterProb = eln_ll(0.5);
 			}
 			else{
@@ -8042,15 +8064,19 @@ void cFlood::getLoglikelihood(){
 				curWaterProb = eln_ll(data.allNodes[curNode]->p);
 			}
 
-			if (data.allNodes[curNode]->parentsID.size() == 0){
-				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi);
+			if (data.allNodes[curNode]->parentsID.size() == 0) {
+				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho); // TODO: check this +/-
 			}
-			else{
-				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi); // TODO: take rho as parameter
+			else if (data.allNodes[curNode]->childrenID.size() == 0)
+			{
+				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi);
+			}
+			else {
+				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho);
 			}
 			
 			if (data.allNodes[curNode]->parentsID.size() == 0){
-				curMaxGain = initialLog + curGain; // TODO: check with Yupu +=?
+				curMaxGain = initialLog + curGain; 
 				loglikelihood.push_back(curMaxGain);
 			}
 			else{
@@ -8058,10 +8084,13 @@ void cFlood::getLoglikelihood(){
 				loglikelihood.push_back(curMaxGain);
 			}
 
+			mainBranchNodeIds.push_back(curNode);
+
 			curNode = data.allNodes[curNode]->childrenID[0];
 		}
 
 		data.loglikelihood_leftRegions.push_back(loglikelihood);
+		data.mainBranchNodeIds_leftRegions.push_back(mainBranchNodeIds);
 	}
 
 	// Right Bank
@@ -8071,6 +8100,7 @@ void cFlood::getLoglikelihood(){
 		//Calculate Gain
 		double curWaterProb, curDryProb,  curMaxGain = 0;
 		vector<double> loglikelihood;
+		vector<int> mainBranchNodeIds;
 
 		double curGain = 0;
 
@@ -8087,7 +8117,7 @@ void cFlood::getLoglikelihood(){
 
 		while (data.allNodes[curNode]->childrenID.size() != 0) { 
 			if (data.allNodes[curNode]->isNa == 1){
-				curDryProb = eln_ll(0.5); // TODO: check this, in fist I use 0.3/0.7
+				curDryProb = eln_ll(0.5); 
 				curWaterProb = eln_ll(0.5);
 			}
 			else{
@@ -8095,16 +8125,16 @@ void cFlood::getLoglikelihood(){
 				curWaterProb = eln_ll(data.allNodes[curNode]->p);
 			}
 
-			curGain = curDryProb + eln_ll(1 - parameter.Pi);
+			curGain = curDryProb - eln_ll(1 - parameter.Pi);
 			
-			initialLog += curGain; // TODO: check with Yupu; why + initialLog?
+			initialLog += curGain; 
 			curNode = data.allNodes[curNode]->childrenID[0];
 		}
 
 		curNode = data.rightNodesInOrder[rightOrder];
 		while (data.allNodes[curNode]->childrenID.size() != 0) { 
 			if (data.allNodes[curNode]->isNa == 1){
-				curDryProb = eln_ll(0.5); // TODO: check this, in fist I use 0.3/0.7
+				curDryProb = eln_ll(0.5); 
 				curWaterProb = eln_ll(0.5);
 			}
 			else{
@@ -8112,15 +8142,19 @@ void cFlood::getLoglikelihood(){
 				curWaterProb = eln_ll(data.allNodes[curNode]->p);
 			}
 
-			if (data.allNodes[curNode]->parentsID.size() == 0){
-				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi);
+			if (data.allNodes[curNode]->parentsID.size() == 0) {
+				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho); // TODO: check this +/-
 			}
-			else{
-				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi); // TODO: take rho as parameter
+			else if (data.allNodes[curNode]->childrenID.size() == 0)
+			{
+				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi);
+			}
+			else {
+				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho);
 			}
 			
 			if (data.allNodes[curNode]->parentsID.size() == 0){
-				curMaxGain = initialLog + curGain; // TODO: check with Yupu +=?
+				curMaxGain = initialLog + curGain; 
 				loglikelihood.push_back(curMaxGain);
 			}
 			else{
@@ -8128,12 +8162,399 @@ void cFlood::getLoglikelihood(){
 				loglikelihood.push_back(curMaxGain);
 			}
 
+			mainBranchNodeIds.push_back(curNode);
+
 			curNode = data.allNodes[curNode]->childrenID[0];
 		}
 
 		data.loglikelihood_rightRegions.push_back(loglikelihood);
+		data.mainBranchNodeIds_rightRegions.push_back(mainBranchNodeIds);
 	}
 }
+
+void cFlood::viterbi(){
+	vector<double> llCurrRegion; 
+	vector<double> llNextRegion;
+	vector<double> costMapCurrRegion;
+	vector<double> costMapNextRegion;
+// 	vector<vector<double>> delta;
+    vector<vector<pair<double, int>>> delta;
+	vector<vector<int>> path;
+	vector<map<int, int>> path_map;
+// 	vector<double>* tempLoss;
+    // vector<double> tempLoss;
+    vector<pair<double, int>> tempLoss;
+	double loss, tempBest, max_val;
+	int individualPath, sta;
+	// vector<size_t> result_ids_left;
+	// vector<double> result_costs;
+
+	// TODO: check this parameter
+	// parameter.lambda = 0.5;
+	size_t lambda;
+	
+	double prev_lb, prev_ub = 0;
+
+	// Left Bank
+// 	for (int leftOrder = 0; leftOrder < data.leftNodesInCorrectOrder.size()-1; leftOrder++) {
+    for (int leftOrder = 0; leftOrder < 3; leftOrder++) {
+        
+        double currRegionInferredCost = data.inferredFloodFrontier_regionId2Cost[data.leftNodesInCorrectOrder[leftOrder]];
+        double nextRegionInferredCost = data.inferredFloodFrontier_regionId2Cost[data.leftNodesInCorrectOrder[leftOrder + 1]];
+// 		data.inferredFloodFrontier_regionId2nodeId
+		
+		llCurrRegion = data.loglikelihood_leftRegions[leftOrder];
+		llNextRegion = data.loglikelihood_leftRegions[leftOrder + 1];
+
+		// TODO: get cost using data.allNodes[nodid]->cost
+		
+// 		vector<double> temp;
+        vector<pair<double, int>> temp;
+		vector<int> tempPath;
+		map<int, int> tempPathMap;
+		
+		lambda = data.inferredFloodFrontier_regionId2Size[data.leftNodesInCorrectOrder[leftOrder]]; // TODO: check size
+        // lambda = 0.5;
+		
+		cout << "leftOrder: " << leftOrder << endl;
+		
+		double next_ub = max(prev_ub, max(currRegionInferredCost, nextRegionInferredCost));
+		double next_lb = min(currRegionInferredCost, nextRegionInferredCost);
+		
+// 		cout << "next_ub: " << next_ub << " next_lb: " << next_lb << endl;
+
+		for (int j=0; j < llNextRegion.size(); j++){
+		    double nextCost = data.allNodes[data.mainBranchNodeIds_leftRegions[leftOrder + 1][j]]->cost;
+		    
+		  //  // pruning
+		  //  if ((nextCost > next_ub) || (nextCost < next_lb)){
+		  //      continue;
+		  //  }
+		    
+// 			vector<double> temp;
+// 			vector<int> tempPath;
+			tempBest = MAXGAIN;
+			
+			double curr_ub = min(prev_ub, max(currRegionInferredCost, nextRegionInferredCost));
+			double curr_lb = max(prev_lb, min(currRegionInferredCost, nextRegionInferredCost));
+			
+			if (leftOrder == 0){
+			    curr_ub = max(currRegionInferredCost, nextRegionInferredCost);
+			}
+			
+// 			cout << "curr_ub: " << curr_ub << " curr_lb: " << curr_lb << endl;
+
+			for (int k=0; k < llCurrRegion.size(); k++){
+				double currCost = data.allNodes[data.mainBranchNodeIds_leftRegions[leftOrder][k]]->cost;
+				
+				// // pruning
+				// if ((currCost > curr_ub) || (currCost < curr_lb)){
+				//     continue;
+				// }
+				
+				// cout << "currCost: " << currCost <<  " k: " << k << endl;
+				
+				
+				if (leftOrder == 0){
+					loss = -llCurrRegion[k] + lambda * abs(currCost - nextCost);
+				}
+				else{
+				// 	tempLoss = &delta.back();
+				    tempLoss = delta.back();
+					loss = tempLoss[k].first - llCurrRegion[k] + lambda * abs(currCost - nextCost);
+				}
+				if (loss < tempBest){
+					tempBest = loss;
+					individualPath = k; // save the best route and remove all other routes
+				}
+			}
+			temp.push_back(make_pair(tempBest, j));
+			tempPath.push_back(individualPath); // save the best route in one region
+			tempPathMap[j] = individualPath;
+		}
+		
+		prev_ub = next_ub;
+		prev_lb = next_lb;
+		
+		cout << "Before delta" << endl;
+		delta.push_back(temp);
+		path.push_back(tempPath);
+		path_map.push_back(tempPathMap);
+	}
+	
+	cout << "delta back size: " << delta.back().size() << endl;
+	cout << "path size: " << path.size() << endl;
+
+	// find one final optimal path
+	max_val = delta.back().at(0).first;
+	sta = 0;
+	
+	cout << "max_val: " << max_val << endl;
+	
+	// find frontier node (Start point) on last region
+	for (int i=0; i < delta.back().size(); i++){
+		if (delta.back().at(i).first > max_val){
+			max_val = delta.back().at(i).first;
+			sta = i;
+		}
+	}
+	cout << "max val: " << max_val << endl;
+	cout << "sta: " << sta << endl;
+// 	data.result_ids_left.push_back(sta); // TODO: should not be 0
+	data.result_ids_left.push_back(delta.back().at(sta).second);
+	cout << "sta corr: " << delta.back().at(sta).second << endl;
+
+// 	for (int leftOrder=0; leftOrder < data.leftNodesInCorrectOrder.size()-1; leftOrder++){
+    for (int leftOrder=0; leftOrder < 3; leftOrder++){
+// 		sta = path[data.leftNodesInCorrectOrder.size() - leftOrder - 1][sta];
+        if (leftOrder == 0){
+            sta = path[3 - leftOrder - 1][sta];
+        }
+        else{
+            sta = path_map[3 - leftOrder - 1][sta];
+        }
+        // sta = path[2 - leftOrder - 1][sta];
+        cout << "leftOrder: " << leftOrder << " sta: " << sta << " path size: " << path[3-leftOrder-1].size() << endl;
+		data.result_ids_left.push_back(sta);
+	}
+	reverse(data.result_ids_left.begin(), data.result_ids_left.end());
+	
+	
+	// display the result
+	cout << "#######################" << endl;
+	cout << "Left Bank Regions: " << endl;
+// 	for (int lOrder=0; lOrder < data.leftNodesInCorrectOrder.size(); lOrder++){
+    for (int lOrder=0; lOrder < 4; lOrder++){
+	    int region_id = data.leftNodesInCorrectOrder[lOrder];
+	    int frontier_node_idx = data.result_ids_left[lOrder];
+	    cout << "frontier node idx: " << frontier_node_idx << endl;
+	    cout << "main branch size: " << data.mainBranchNodeIds_leftRegions[lOrder].size()  << "node id: " << data.mainBranchNodeIds_leftRegions[lOrder][frontier_node_idx] << endl;
+	    double regularized_cost = data.allNodes[data.mainBranchNodeIds_leftRegions[lOrder][frontier_node_idx]]->cost;
+	    cout << "Region Id: " << region_id << " Regularized Cost: " << regularized_cost << endl;
+	    
+	}
+}
+
+
+// void cFlood::viterbi_original(){
+// 	vector<double> llCurrRegion; 
+// 	vector<double> llNextRegion;
+// 	vector<double> costMapCurrRegion;
+// 	vector<double> costMapNextRegion;
+// 	vector<vector<double>> delta;
+// 	vector<vector<int>> path;
+// // 	vector<double>* tempLoss;
+//     vector<double> tempLoss;
+// 	double loss, tempBest, max;
+// 	int individualPath, sta;
+// 	// vector<size_t> result_ids_left;
+// 	// vector<double> result_costs;
+
+// 	// TODO: check this parameter
+// 	// parameter.lambda = 0.5;
+// 	double lambda = 1;
+
+// 	// Left Bank
+// // 	for (int leftOrder = 0; leftOrder < data.leftNodesInCorrectOrder.size()-1; leftOrder++) {
+//     for (int leftOrder = 0; leftOrder < 2; leftOrder++) {
+		
+// 		llCurrRegion = data.loglikelihood_leftRegions[leftOrder];
+// 		llNextRegion = data.loglikelihood_leftRegions[leftOrder + 1];
+
+// 		// TODO: get cost using data.allNodes[nodid]->cost
+		
+// 		vector<double> temp;
+// 		vector<int> tempPath;
+		
+// 		cout << "leftOrder: " << leftOrder << endl;
+
+// 		for (int j=0; j < llNextRegion.size(); j++){
+// // 			vector<double> temp;
+// // 			vector<int> tempPath;
+// 			tempBest = 0;
+
+// 			for (int k=0; k < llCurrRegion.size(); k++){
+// 				double currCost = data.allNodes[data.mainBranchNodeIds_leftRegions[leftOrder][k]]->cost;
+// 				double nextCost = data.allNodes[data.mainBranchNodeIds_leftRegions[leftOrder + 1][j]]->cost; // TODO: verify with Yupu
+				
+// 				if (leftOrder == 0){
+// 					loss = llCurrRegion[k] + lambda * abs(currCost - nextCost); // TODO: verify with Yupu
+// 				}
+// 				else{
+// 				// 	tempLoss = &delta.back();
+// 				    tempLoss = delta.back();
+// 					loss = tempLoss[k] + llCurrRegion[k] + lambda * abs(currCost - nextCost);
+// 				    // loss = tempLoss[k] - llCurrRegion[k] + lambda * abs(currCost - nextCost);
+// 				}
+
+// 				if (loss < tempBest){
+// 					tempBest = loss; // TODO: loss or likelihood? + or -?
+// 					individualPath = k; // save the best route and remove all other routes
+// 				}
+// 			}
+// 			temp.push_back(tempBest);
+// 			tempPath.push_back(individualPath); // save the best route in one region
+// 		}
+// 		cout << "Before delta" << endl;
+// 		delta.push_back(temp);
+// 		path.push_back(tempPath);
+// 	}
+	
+// 	cout << "delta back size: " << delta.back().size() << endl;
+// 	cout << "path size: " << path.size() << endl;
+
+// 	// find one final optimal path
+// 	max = delta.back().at(0);
+// 	sta = 0;
+	
+// 	cout << "max: " << max << endl;
+	
+// 	// find frontier node (Start point) on last region
+// 	for (int i=0; i < delta.back().size(); i++){
+// 		if (delta.back().at(i) > max){
+// 			max = delta.back().at(i);
+// 			sta = i;
+// 		}
+// 	}
+// 	cout << "sta: " << sta << endl;
+// 	data.result_ids_left.push_back(sta);
+
+// // 	for (int leftOrder=0; leftOrder < data.leftNodesInCorrectOrder.size()-1; leftOrder++){
+//     for (int leftOrder=0; leftOrder < 2; leftOrder++){
+// // 		sta = path[data.leftNodesInCorrectOrder.size() - leftOrder - 1][sta];
+//         sta = path[2 - leftOrder - 1][sta];
+// 		data.result_ids_left.push_back(sta);
+// 	}
+// 	reverse(data.result_ids_left.begin(), data.result_ids_left.end());
+	
+	
+// 	// display the result
+// 	cout << "#######################" << endl;
+// 	cout << "Left Bank Regions: " << endl;
+// // 	for (int lOrder=0; lOrder < data.leftNodesInCorrectOrder.size(); lOrder++){
+//     for (int lOrder=0; lOrder < 2; lOrder++){
+// 	    int region_id = data.leftNodesInCorrectOrder[lOrder];
+// 	    int frontier_node_idx = data.result_ids_left[lOrder];
+// 	    cout << "frontier node idx: " << frontier_node_idx << endl;
+// 	    double regularized_cost = data.allNodes[data.mainBranchNodeIds_leftRegions[lOrder][frontier_node_idx]]->cost;
+// 	    cout << "Region Id: " << region_id << " Regularized Cost: " << regularized_cost << endl;
+	    
+// 	}
+	
+
+// // 	vector<double> llCurrRegionRight; 
+// // 	vector<double> llNextRegionRight;
+// // 	// vector<double> costMapCurrRegion;
+// // 	// vector<double> costMapNextRegion;
+// // 	vector<vector<double>> deltaRight;
+// // 	vector<vector<int>> pathRight;
+// // // 	vector<double>* tempLossRight;
+// //     vector<double> tempLossRight;
+// // 	double lossRight, tempBestRight, maxRight;
+// // 	int individualPathRight, staRight;
+// // 	// vector<size_t> result_ids_right;
+// // 	// vector<double> result_costs_right;
+
+
+// // 	// Right Bank
+// // 	for (int rightOrder = 0; rightOrder < data.rightbfsOrder.size()-1; rightOrder++) {
+// //         if (!data.hasObservedPixelsRight[rightOrder] || data.rightbfsOrder[rightOrder].size() < PIXELLIMT) {
+// // 			continue;
+// // 		}
+// // 		llCurrRegionRight = data.loglikelihood_rightRegions[rightOrder];
+// // 		llNextRegionRight = data.loglikelihood_rightRegions[rightOrder + 1];
+
+// // 		// TODO: get cost using data.allNodes[nodid]->cost
+		
+// // 		vector<double> tempRight;
+// // 		vector<int> tempPathRight;
+
+// // 		for (int j=0; j < llNextRegionRight.size(); j++){
+// // // 			vector<double> tempRight;
+// // // 			vector<int> tempPathRight;
+// // 			tempBestRight = 0;
+
+// // 			for (int k=0; k < llCurrRegionRight.size(); k++){
+// // 				double currCostRight = data.allNodes[data.mainBranchNodeIds_rightRegions[rightOrder][k]]->cost;
+// // 				double nextCostRight = data.allNodes[data.mainBranchNodeIds_rightRegions[rightOrder + 1][j]]->cost; // TODO: verify with Yupu
+				
+// // 				if (rightOrder == 0){
+// // 					lossRight = llCurrRegionRight[k] + lambda * abs(currCostRight - nextCostRight); // TODO: verify with Yupu
+// // 				}
+// // 				else{
+// // 				// 	tempLossRight = &deltaRight.back();
+// // 				    tempLossRight = deltaRight.back();
+// // 					lossRight = tempLossRight[k] + llCurrRegionRight[k] + lambda * abs(currCostRight - nextCostRight);
+// // 				}
+
+// // 				if (lossRight < tempBestRight){
+// // 					tempBestRight = lossRight;
+// // 					individualPathRight = k; // save the best route and remove all other routes
+// // 				}
+// // 			}
+// // 			tempRight.push_back(tempBestRight);
+// // 			tempPathRight.push_back(individualPathRight); // save the best route in one region
+// // 		}
+// // 		deltaRight.push_back(tempRight);
+// // 		pathRight.push_back(tempPathRight);
+// // 	}
+
+// // 	// find one final optimal path
+// // 	maxRight = deltaRight.back().at(0);
+// // 	staRight = 0;
+	
+// // 	for (int i=0; i < deltaRight.back().size(); i++){
+// // 		if (deltaRight.back().at(i) > maxRight){
+// // 			maxRight = deltaRight.back().at(i);
+// // 			staRight = i;
+// // 		}
+// // 	}
+// // // 	data.result_ids_right.push_back(staRight);
+
+// // 	for (int rightOrder=0; rightOrder < data.rightbfsOrder.size()-1; rightOrder++){
+// // 		staRight = pathRight[data.rightbfsOrder.size() - rightOrder - 1][staRight];
+// // 		data.result_ids_right.push_back(staRight);
+// // 	}
+// // 	reverse(data.result_ids_right.begin(), data.result_ids_right.end());
+	
+// // 	// display the result
+// // 	cout << "#######################" << endl;
+// // 	cout << "Right Bank Regions: " << endl;
+// // 	for (int rOrder=0; rOrder < data.rightbfsOrder.size(); rOrder++){
+// // 	    int region_id = data.rightNodesInOrder[rOrder];
+// // 	    int frontier_node_idx = data.result_ids_right[rOrder];
+// // 	    double regularized_cost = data.allNodes[data.mainBranchNodeIds_rightRegions[rOrder][frontier_node_idx]]->cost;
+// // 	    cout << "Region Id: " << region_id << " Regularized Cost: " << regularized_cost << endl;
+	    
+// // 	}
+// }
+
+
+
+void cFlood::saveExtraInfo(){
+    ofstream idtable;
+    idtable.open(CTOutputLocation + parameter.reachId + "_id_table.csv");
+
+	idtable << "new_id" << "," << "original_id" << "," << "is_large_region" << "," << "is_river_id" << "," << "is_reach_id" << endl;
+
+	for (int row = 0; row < parameter.ROW; row++){
+		for (int col = 0; col < parameter.COLUMN; col++){
+		    int node_id_orig = row * parameter.COLUMN + col;
+		    int node_id_new = nodeIndexMap[node_id_orig];
+		    int is_large = 0;
+		    
+		    if (std::find(data.leftNodesInCorrectOrder.begin(), data.leftNodesInCorrectOrder.end(), node_id_new) != data.leftNodesInCorrectOrder.end() || 
+		        std::find(data.rightNodesInCorrectOrder.begin(), data.rightNodesInCorrectOrder.end(), node_id_new) != data.rightNodesInCorrectOrder.end()
+		    ){
+		        is_large = 1;
+		    }
+		    
+		    idtable << node_id_new << "," << node_id_orig << "," << is_large << "," << data.river_ids_map[node_id_orig] << "," << data.reach_ids_orig_map[node_id_orig] << endl;
+		}
+	}
+	idtable.close();
+}
+
 
 
 
