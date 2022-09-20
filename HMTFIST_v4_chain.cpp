@@ -109,6 +109,12 @@ public:
 	void prediction_FIST();
 	void selected_prediction();
 	void selected_prediction_FIST();
+	
+	// for later start------
+	void selected_prediction_regularized();
+	void prediction_regularized();
+	void interpolate_regularized();
+	// for later end-------
 
 	//helper functions
 	void removeLink(vector<int>& v, int removeID);
@@ -173,6 +179,8 @@ public:
 	void viterbi();
 	
 	void saveExtraInfo();
+	
+	void adjacentRegions();
 
 	// clear all the vectors
 	void clear_all();
@@ -2206,6 +2214,7 @@ void cFlood::input(int argc, char* argv[]) {
 	// Left
 	for (int leftOrder = 0; leftOrder < data.leftbfsOrder.size(); leftOrder++) {
 		rgn_id = data.leftNodesInOrder[leftOrder];
+		data.leftRegionSize[rgn_id] = data.leftbfsOrder[leftOrder].size();
 
 		double regionRowSum = 0;
 		double regionColSum = 0;
@@ -2245,6 +2254,7 @@ void cFlood::input(int argc, char* argv[]) {
 	// Right
 	for (int rightOrder = 0; rightOrder < data.rightbfsOrder.size(); rightOrder++) {
 		rgn_id = data.rightNodesInOrder[rightOrder];
+		data.rightRegionSize[rgn_id] = data.rightbfsOrder[rightOrder].size();
 
 		double regionRowSum = 0;
 		double regionColSum = 0;
@@ -2288,26 +2298,27 @@ void cFlood::input(int argc, char* argv[]) {
 	int minus_2_count = 0;
 	int one_count = 0;
 
-	float** region_map = new float* [parameter.ROW];
+// 	float** region_map = new float* [parameter.ROW];
+    data.region_map = new float* [parameter.ROW];
 	int index = 0;
 	for (int row = 0; row < parameter.ROW; row++)
 	{
-		region_map[row] = new float[parameter.COLUMN];
+		data.region_map[row] = new float[parameter.COLUMN];
 		for (int col = 0; col < parameter.COLUMN; col++)
 		{
 
 			if (data.reach_ids_orig_map[index]) {
 				// use -2 for boundary nodes in middle of river
 				minus_2_count++;
-				region_map[row][col] = -2;
+				data.region_map[row][col] = -2;
 			}
 			else if (data.river_ids_map[index]) {
 			 // use 1 for nodes in river
 				one_count++;
-				region_map[row][col] = 1;
+				data.region_map[row][col] = 1;
 			}
 			else {
-				region_map[row][col] = map_region_id[index];
+				data.region_map[row][col] = map_region_id[index];
 
 			}
 			index++;
@@ -2348,7 +2359,7 @@ void cFlood::input(int argc, char* argv[]) {
 	const OGRSpatialReference* poSRS_ = srcDataset_->GetSpatialRef();
 
 	GeotiffWrite mapTiff((CTOutputLocation + parameter.reachId + "_RegionMap" + ".tif").c_str(), parameter.ROW, parameter.COLUMN, 1, geotransform_, poSRS_);
-	mapTiff.write(region_map);
+	mapTiff.write(data.region_map);
 
 	// GDALDataset* srcDataset_2 = (GDALDataset*)GDALOpen((CTInputLocation + CTFel).c_str(), GA_ReadOnly);
 	// double geotransform_2[6];
@@ -2592,6 +2603,7 @@ void cFlood::input(int argc, char* argv[]) {
 			parameter.elnPzn_xn[i * cNum + 1] = eln(0.3);
 		}
 	}
+	
 
 	//
 	///*parameter.elnPxn_zn.resize(parameter.allPixelSize* cNum, eln(0.5));*/
@@ -2677,6 +2689,7 @@ void cFlood::input(int argc, char* argv[]) {
 	cout << "Large Regions size: " << data.large_regions.size() << endl;
 	cout << "Left Nodes in Order: " << endl;
 	
+	int selected_order = 0; // for later
 	for (int i=0; i<data.leftNodesInOrder.size(); i++){
 	   // pair<int, int> it;
 	    // int it = id2idx[data.leftNodesInOrder[i]];
@@ -2688,11 +2701,14 @@ void cFlood::input(int argc, char* argv[]) {
 	    if (data.large_regions[data.leftNodesInOrder[i]]){
 	        cout << data.leftNodesInOrder[i] << endl;
 	        data.leftNodesInCorrectOrder.push_back(data.leftNodesInOrder[i]);
+	        data.leftSelected2AllOrder[selected_order] = i;
+	        selected_order++;
 	    }
 	    
 	}
 	
 	cout << "Right Nodes in Order: " << endl;
+	selected_order = 0;
 	for (int i=0; i<data.rightNodesInOrder.size(); i++){
 	   // pair<int, int> it;
 	    // int it = id2idx[data.rightNodesInOrder[i]];
@@ -2704,8 +2720,13 @@ void cFlood::input(int argc, char* argv[]) {
 	    if (data.large_regions[data.rightNodesInOrder[i]]){
 	        cout << data.rightNodesInOrder[i] << endl;
 	        data.rightNodesInCorrectOrder.push_back(data.rightNodesInOrder[i]);
+	        data.rightSelected2AllOrder[selected_order] = i;
+	        selected_order++;
 	    }
 	}
+	
+// 	adjacentRegions();
+// 	return;
 
 	
 // 	ofstream nodesOut;
@@ -2758,6 +2779,7 @@ void cFlood::input(int argc, char* argv[]) {
 
 	// TODO: check, calculate loglikelihood for regularization
 	getLoglikelihood();
+
 	for (int i=0; i<2; i++){
 		cout << "i: " << data.leftNodesInCorrectOrder[i] << endl;
 		cout << "loglikelihood: " << endl;
@@ -2767,6 +2789,23 @@ void cFlood::input(int argc, char* argv[]) {
 	}
 	
 	viterbi();
+	
+	// for later start
+	if (parameter.useHMT) {
+		selected_prediction_regularized();
+	}
+
+	cout << "after selected prediction fist" << endl;
+
+	interpolate_regularized();
+
+	cout << "after interpolate" << endl;
+
+	// we don't need to predict again for HMT
+	if (parameter.useHMT) {
+		prediction_regularized();
+	}
+	/// for later end
 
 
 	auto end = std::chrono::system_clock::now();
@@ -3170,6 +3209,150 @@ void cFlood::selected_prediction() {
 	cout << "Selected Prediction finished!" << endl;
 }
 
+
+// selected prediction after regularization
+void cFlood::selected_prediction_regularized() {
+	cout << "Selected prediction started!" << endl;
+
+	//for left trees
+	for (int leftOrder = 0; leftOrder < data.leftbfsOrder.size(); leftOrder++) {
+
+		if (data.leftbfsOrder[leftOrder].size() != 0 && data.leftbfsRootNodes[leftOrder] != -1) {
+			for (int i = 0; i < data.leftbfsOrder[leftOrder].size(); i++) {
+				int nodid = data.leftbfsOrder[leftOrder][i];
+
+				// commenting temporarily
+				if (data.regularizedMaxCostLeft[leftOrder] == -1 && data.leftbfsOrder[leftOrder].size() < PIXELLIMT) {  //not interpolated
+					continue;
+					/*if (data.allNodes[nodid]->isNa == 0)
+						mappredictions[data.allNodes[nodid]->originalId] = data.rightNodesInOrder[leftOrder] * 2;*/
+				}
+				else {
+
+					// Refill
+					if (data.allNodes[nodid]->cost <= data.regularizedMaxCostLeft[leftOrder] && data.allNodes[nodid]->isNa == 0) { // CHECK NC
+						mappredictions[data.allNodes[nodid]->originalId] = data.leftNodesInOrder[leftOrder];
+					}
+					else {
+						mappredictions[data.allNodes[nodid]->originalId] = 0;
+					}
+
+				// 	// No Refill
+				// 	if (mappredictions[data.allNodes[nodid]->originalId] == 1) {
+				// 		mappredictions[data.allNodes[nodid]->originalId] = data.rightNodesInOrder[leftOrder];
+				// 	}
+				// 	else {
+				// 		mappredictions[data.allNodes[nodid]->originalId] = 0;
+				// 	}
+
+
+				}
+			}
+		}
+	}
+
+	for (int i = 0; i < data.leftNodesInOrder.size(); i++) {
+		//mappredictions[data.rightNodesInOrder[i]] = 1;  //reach ids are the lowest point in the river
+		mappredictions[data.allNodes[data.leftNodesInOrder[i]]->originalId] = 1;
+	}
+
+	//for right trees
+	for (int rightOrder = 0; rightOrder < data.rightbfsOrder.size(); rightOrder++) {
+		/*if (data.hasObservedPixelsRight[rightOrder] && data.rightbfsOrder[rightOrder].size()>= PIXELLIMT) {
+			continue;
+		}*/
+		if (data.rightbfsOrder[rightOrder].size() != 0 && data.rightbfsRootNodes[rightOrder] != -1) {
+			for (int i = 0; i < data.rightbfsOrder[rightOrder].size(); i++) {
+				int nodid = data.rightbfsOrder[rightOrder][i];
+
+				// commenting temporarily
+				if (data.regularizedMaxCostRight[rightOrder] == -1 && data.rightbfsOrder[rightOrder].size() < PIXELLIMT) {  //not interpolated
+					continue;
+					/*if (data.allNodes[nodid]->isNa == 0)
+						mappredictions[data.allNodes[nodid]->originalId] = data.rightNodesInOrder[rightOrder] * 2;*/
+				}
+				else {
+
+					// Refill
+					if (data.allNodes[nodid]->cost <= data.regularizedMaxCostRight[rightOrder] && data.allNodes[nodid]->isNa == 0) { // CHECK NC
+						mappredictions[data.allNodes[nodid]->originalId] = data.rightNodesInOrder[rightOrder];
+					}
+					else {
+						mappredictions[data.allNodes[nodid]->originalId] = 0;
+						}
+
+				// 	// No Refill
+				// 	if (mappredictions[data.allNodes[nodid]->originalId] == 1) {
+				// 		mappredictions[data.allNodes[nodid]->originalId] = data.rightNodesInOrder[rightOrder];
+				// 	}
+				// 	else {
+				// 		mappredictions[data.allNodes[nodid]->originalId] = 0;
+				// 	}
+
+
+				}
+			}
+		}
+	}
+
+	for (int i = 0; i < data.rightNodesInOrder.size(); i++) {
+		//mappredictions[data.rightNodesInOrder[i]] = 1;  //reach ids are the lowest point in the river
+		mappredictions[data.allNodes[data.rightNodesInOrder[i]]->originalId] = 1;
+	}
+
+	// nodes in river(high prob pixels from UNet should also be flooded)
+	for (int i = 0; i < data.river_ids.size(); i++) {
+		//mappredictions[data.river_ids_orig[i]] = 1;  //reach ids are the lowest point in the river
+		mappredictions[data.allNodes[data.river_ids[i]]->originalId] = 1;
+	}
+
+	// Comment: END
+
+	auto start = std::chrono::system_clock::now();
+
+	ofstream classout;
+	string idf = "no_cutoff";
+	if (parameter.useCutoff == 1) {
+		idf = "cutoff_" + to_string((int)(parameter.cutoff_percentage * 100));
+	}
+
+	string tree_type = "fist_tree";
+	if (parameter.useHMT == 1) {
+		tree_type = "hmt_tree";
+	}
+
+	idf = idf + "_" + tree_type;
+
+	classout.open(CTOutputLocation + parameter.reachId + "_Prediction_selected_regularized_" + idf + ".txt");
+	//classout.open(CTOutputLocation + parameter.fname + ".txt");
+
+	for (int i = 0; i < mappredictions.size(); i++) {
+		classout << mappredictions[i] << endl;
+	}
+	classout.close();
+	//Note end
+	float** prediction = new float* [parameter.ROW];
+	int index = 0;
+	for (int row = 0; row < parameter.ROW; row++)
+	{
+		prediction[row] = new float[parameter.COLUMN];
+		for (int col = 0; col < parameter.COLUMN; col++)
+		{
+			prediction[row][col] = mappredictions[index];
+			index++;
+		}
+	}
+	GDALDataset* srcDataset = (GDALDataset*)GDALOpen((CTInputLocation + CTFel).c_str(), GA_ReadOnly);
+	double geotransform[6];
+	srcDataset->GetGeoTransform(geotransform);
+	const OGRSpatialReference* poSRS = srcDataset->GetSpatialRef();
+	;
+	GeotiffWrite finalTiff((CTOutputLocation + parameter.reachId + "_Prediction_selected_regularized_" + idf + ".tif").c_str(), parameter.ROW, parameter.COLUMN, 1, geotransform, poSRS);
+	finalTiff.write(prediction);
+
+	cout << "Selected Prediction Regularized finished!" << endl;
+}
+
 // function to do prediction only on selected regions for easy validation
 // commented the water filling part, don't predict again, just use the inferred class
 void cFlood::selected_prediction_FIST() {
@@ -3404,6 +3587,92 @@ void cFlood::prediction() {
 
 
 	cout << "prediction finished!" << endl;
+}
+
+void cFlood::prediction_regularized() {
+	cout << "prediction regularized started!" << endl;
+	//mappredictions.resize(parameter.orgPixelSize, -1);
+
+	// CHECK: do not reset to -1, just skip inferred region and predict only on regions whose cost we found after interpolation
+	// TODO: comment this for HMT, uncomment for FIST
+	//std::fill(mappredictions.begin(), mappredictions.end(), -1);
+
+	//for left trees
+	for (int leftOrder = 0; leftOrder < data.leftbfsOrder.size(); leftOrder++) {
+
+		// no need to touch inferred regions
+		if (data.leftInferredRegions[data.leftNodesInOrder[leftOrder]]) {
+			continue;
+		}
+
+		if (data.leftbfsOrder[leftOrder].size() != 0 && data.leftbfsRootNodes[leftOrder] != -1) {
+			for (int i = 0; i < data.leftbfsOrder[leftOrder].size(); i++) {
+				int nodid = data.leftbfsOrder[leftOrder][i];
+				if (data.regularizedMaxCostLeft[leftOrder] == -1 && data.leftbfsOrder[leftOrder].size() < PIXELLIMT) {  //not interpolated
+					continue;
+				}
+				else {
+					/*if (data.allNodes[nodid]->cost <= data.inferedmaxCostRight[leftOrder] && data.allNodes[nodid]->isNa == 0) {*/
+					//if (data.allNodes[nodid]->fel <= data.inferedmaxCostRight[leftOrder] && data.allNodes[nodid]->isNa == 0) { // CHECK
+					if (data.allNodes[nodid]->cost <= data.regularizedMaxCostLeft[leftOrder] && data.allNodes[nodid]->isNa == 0) { // CHECK NC
+						// mappredictions[data.allNodes[nodid]->originalId] = 1;
+						mappredictions[data.allNodes[nodid]->originalId] = data.leftNodesInOrder[leftOrder];
+					}
+					/*else if(data.allNodes[nodid]->isNa == 0){*/
+					else if (mappredictions[data.allNodes[nodid]->originalId] == 0) {
+						mappredictions[data.allNodes[nodid]->originalId] = 0;
+					}
+					else {
+						mappredictions[data.allNodes[nodid]->originalId] = -1; // NC
+					}
+				}
+			}
+		}
+	}
+
+	for (int i = 0; i < data.leftNodesInOrder.size(); i++) {
+		mappredictions[data.allNodes[data.leftNodesInOrder[i]]->originalId] = 1;
+	}
+
+	//for right trees
+	for (int rightOrder = 0; rightOrder < data.rightbfsOrder.size(); rightOrder++) {
+
+		// no need to touch inferred regions
+		if (data.rightInferredRegions[data.rightNodesInOrder[rightOrder]]) {
+			continue;
+		}
+
+		if (data.rightbfsOrder[rightOrder].size() != 0 && data.rightbfsRootNodes[rightOrder] != -1) {
+			for (int i = 0; i < data.rightbfsOrder[rightOrder].size(); i++) {
+				int nodid = data.rightbfsOrder[rightOrder][i];
+				if (data.regularizedMaxCostRight[rightOrder] == -1 && data.rightbfsOrder[rightOrder].size() < PIXELLIMT) {  //not interpolated
+					continue;
+				}
+				else {
+					/*if (data.allNodes[nodid]->cost <= data.inferedmaxCostRight[rightOrder] && data.allNodes[nodid]->isNa == 0) {*/
+					//if (data.allNodes[nodid]->fel <= data.inferedmaxCostRight[rightOrder] && data.allNodes[nodid]->isNa == 0) { // CHECK
+					if (data.allNodes[nodid]->cost <= data.regularizedMaxCostRight[rightOrder] && data.allNodes[nodid]->isNa == 0) { // CHECK NC
+						// mappredictions[data.allNodes[nodid]->originalId] = 1;
+						mappredictions[data.allNodes[nodid]->originalId] = data.rightNodesInOrder[rightOrder];
+					}
+					/*else if(data.allNodes[nodid]->isNa == 0){*/
+					else if (mappredictions[data.allNodes[nodid]->originalId] == 0) {
+						mappredictions[data.allNodes[nodid]->originalId] = 0;
+					}
+					else {
+						mappredictions[data.allNodes[nodid]->originalId] = -1; // NC
+					}
+				}
+			}
+		}
+	}
+
+	for (int i = 0; i < data.rightNodesInOrder.size(); i++) {
+		mappredictions[data.allNodes[data.rightNodesInOrder[i]]->originalId] = 1;
+	}
+
+
+	cout << "prediction regularized finished!" << endl;
 }
 
 
@@ -3773,6 +4042,235 @@ void cFlood::interpolate() {
 
 	}
 	cout << "interpolation finished!" << endl;
+
+}
+
+void cFlood::interpolate_regularized() {
+	cout << "interpolation regularized started!" << endl;
+	//profile table before interpolation
+	ofstream profiletable;
+// 	data.combinedCost.resize(data.reach_ids.size(), 0);
+// 	data.avgCost.resize(data.reach_ids.size(), 0);
+	//find the regions with infered cost values (i.e values that are not -1)
+	vector<int> stops;
+	for (int i = 0; i < data.leftNodesInOrder.size(); i++) {
+		if (data.regularizedMaxCostLeft[i] > 0) {
+		  //  cout << data.reach_ids[i] << endl;
+			stops.push_back(i);
+		}
+	}
+
+// 	//calculating combined cost
+// 	//case 1: from first index to first stop
+// 	float value = data.inferedmaxCostRight[stops[0]];
+// 	for (int i = 0; i <= stops[0]; i++) {
+// 		data.combinedCost[i] = value;
+// 	}
+// 	//case 2: from last infered cost to last reach ids
+// 	int lastIndex = (stops.size() - 1);
+// 	value = data.inferedmaxCostRight[stops[lastIndex]];
+// 	for (int i = stops[lastIndex]; i < data.reach_ids.size(); i++) {
+// 		data.combinedCost[i] = value;
+// 	}
+// 	//case 3: intermediate
+// 	for (int i = 0; i < stops.size() - 1; i++) {
+// 		//cout<<"i = "<<i<<endl;
+// 		int first = stops[i];
+// 		int second = stops[(i + 1)];
+// 		int diff = second - first;
+// 		//cout << "i = " << i << " first= " <<first<<" second= "<<second <<" diff= "<<diff<< endl;
+// 		//cout << " data.inferedmaxCostLeft[stops[second]] = " << data.inferedmaxCostLeft[stops[second]] << " data.inferedmaxCostRight[stops[second]]= " << data.inferedmaxCostRight[stops[second]]<< endl;
+// 		float firstValue = data.inferedmaxCostRight[first];
+// 		float secondValue = data.inferedmaxCostRight[second];
+// 		//cout << "i = " << i << " first= " << first << " second= " << second << " diff= " << diff << " firstvalue= " << firstValue << " secondValue= " << secondValue << endl;
+// 		float change = (secondValue - firstValue) / diff;
+// 		data.combinedCost[first] = firstValue;
+// 		data.combinedCost[second] = secondValue;
+// 		for (int j = first + 1; j < second; j++) {
+// 			data.combinedCost[j] = data.combinedCost[(j - 1)] + change;
+// 		}
+// 	}
+
+	string idf = "no_cutoff";
+	if (parameter.useCutoff == 1) {
+		idf = "cutoff_" + to_string((int)(parameter.cutoff_percentage * 100));
+	}
+
+	string tree_type = "fist_tree";
+	if (parameter.useHMT == 1) {
+		tree_type = "hmt_tree";
+	}
+
+	idf = idf + "_" + tree_type;
+
+	profiletable.open(CTOutputLocation + "ProfileTables/" + parameter.reachId + "_ProfileTable_preInterpolation_left_" + idf + ".csv");
+	//profiletable.open(CTOutputLocation + "ProfileTables\\" + parameter.fname + "_ProfileTable_preInterpolation.csv");
+	profiletable << "SourceId" << "," << "Left Infered Cost" << endl;
+	for (int index = 0; index < data.leftNodesInOrder.size(); index++) {
+		profiletable << data.leftNodesInOrder[index] << ","
+			<< data.regularizedMaxCostLeft[index] << endl;
+	}
+	profiletable.close();
+
+	//for right bank.
+	int current = 0;
+	while (current < data.leftNodesInOrder.size()) {
+		if (data.regularizedMaxCostLeft[current] == -1 && current == 0) {
+
+			//find the first reach node with non -1 max cost value
+			int index = -1;
+			for (int j = 1; j < data.leftNodesInOrder.size(); j++) {
+				if (data.regularizedMaxCostLeft[j] != -1) {
+					index = j;
+					break;
+				}
+			}
+			if (index == -1) {
+				break;
+			}
+			double value = data.regularizedMaxCostLeft[index];
+			for (int i = 0; i < index; i++) {
+				data.regularizedMaxCostLeft[i] = value;
+				data.inferedmaxCost_id2cost[data.leftNodesInOrder[i]] = value;
+			}
+			current = index;
+
+
+		}
+		else if (data.regularizedMaxCostLeft[current] != -1) {
+			//two cases
+				//case 1: there are n points in between next reach that has cost value
+				//case 2: there is no next point
+			//find index of next reach node that has cost value
+			int index = -1;
+			int count = 0;
+			double value = data.regularizedMaxCostLeft[current];
+			for (int j = current + 1; j < data.leftNodesInOrder.size(); j++) {
+				if (data.regularizedMaxCostLeft[j] != -1) {
+					index = j;
+					break;
+				}
+				count++;
+			}
+			if (index == -1) {// case 2
+				for (int i = current + 1; i < data.leftNodesInOrder.size(); i++) {
+					data.regularizedMaxCostLeft[i] = value;
+					data.inferedmaxCost_id2cost[data.leftNodesInOrder[i]] = value;
+				}
+				current = data.leftNodesInOrder.size();
+				break;
+			}
+			else if (count == 0 && index == current + 1) {
+				current = index;
+			}
+			else {
+				double interval = (data.regularizedMaxCostLeft[index] - value) / count;
+				for (int i = current + 1; i < index; i++) {
+					data.regularizedMaxCostLeft[i] = data.regularizedMaxCostLeft[(i - 1)] + interval;
+					data.inferedmaxCost_id2cost[data.leftNodesInOrder[i]] = data.regularizedMaxCostLeft[(i - 1)] + interval;
+				}
+				current = index;
+			}
+		}
+
+	}
+	
+	ofstream profiletable_right;
+// 	data.combinedCost.resize(data.reach_ids.size(), 0);
+// 	data.avgCost.resize(data.reach_ids.size(), 0);
+	//find the regions with infered cost values (i.e values that are not -1)
+// 	vector<int> stops_right;
+// 	for (int i = 0; i < data.rightNodesInOrder.size(); i++) {
+// 		if (data.inferedmaxCostRight_new[i] > 0) {
+// 		  //  cout << data.reach_ids[i] << endl;
+// 			stops.push_back(i);
+// 		}
+// 	}
+
+// 	string idf = "no_cutoff";
+// 	if (parameter.useCutoff == 1) {
+// 		idf = "cutoff_" + to_string((int)(parameter.cutoff_percentage * 100));
+// 	}
+
+// 	string tree_type = "fist_tree";
+// 	if (parameter.useHMT == 1) {
+// 		tree_type = "hmt_tree";
+// 	}
+
+// 	idf = idf + "_" + tree_type;
+
+	profiletable_right.open(CTOutputLocation + "ProfileTables/" + parameter.reachId + "_ProfileTable_preInterpolation_right_" + idf + ".csv");
+	//profiletable.open(CTOutputLocation + "ProfileTables\\" + parameter.fname + "_ProfileTable_preInterpolation.csv");
+	profiletable_right << "SourceId" << "," << "Right Infered Cost" << endl;
+	for (int index = 0; index < data.rightNodesInOrder.size(); index++) {
+		profiletable_right << data.rightNodesInOrder[index] << ","
+			<< data.regularizedMaxCostRight[index] << endl;
+	}
+	profiletable_right.close();
+
+	//for right bank.
+	current = 0;
+	while (current < data.rightNodesInOrder.size()) {
+		if (data.regularizedMaxCostRight[current] == -1 && current == 0) {
+
+			//find the first reach node with non -1 max cost value
+			int index = -1;
+			for (int j = 1; j < data.rightNodesInOrder.size(); j++) {
+				if (data.regularizedMaxCostRight[j] != -1) {
+					index = j;
+					break;
+				}
+			}
+			if (index == -1) {
+				break;
+			}
+			double value = data.regularizedMaxCostRight[index];
+			for (int i = 0; i < index; i++) {
+				data.regularizedMaxCostRight[i] = value;
+				data.inferedmaxCost_id2cost[data.rightNodesInOrder[i]] = value;
+			}
+			current = index;
+
+
+		}
+		else if (data.regularizedMaxCostRight[current] != -1) {
+			//two cases
+				//case 1: there are n points in between next reach that has cost value
+				//case 2: there is no next point
+			//find index of next reach node that has cost value
+			int index = -1;
+			int count = 0;
+			double value = data.regularizedMaxCostRight[current];
+			for (int j = current + 1; j < data.rightNodesInOrder.size(); j++) {
+				if (data.regularizedMaxCostRight[j] != -1) {
+					index = j;
+					break;
+				}
+				count++;
+			}
+			if (index == -1) {// case 2
+				for (int i = current + 1; i < data.rightNodesInOrder.size(); i++) {
+					data.regularizedMaxCostRight[i] = value;
+					data.inferedmaxCost_id2cost[data.rightNodesInOrder[i]] = value;
+				}
+				current = data.rightNodesInOrder.size();
+				break;
+			}
+			else if (count == 0 && index == current + 1) {
+				current = index;
+			}
+			else {
+				double interval = (data.regularizedMaxCostRight[index] - value) / count;
+				for (int i = current + 1; i < index; i++) {
+					data.regularizedMaxCostRight[i] = data.regularizedMaxCostRight[(i - 1)] + interval;
+					data.inferedmaxCost_id2cost[data.rightNodesInOrder[i]] = data.regularizedMaxCostRight[(i - 1)] + interval;
+				}
+				current = index;
+			}
+		}
+
+	}
+	cout << "interpolation regularized finished!" << endl;
 
 }
 
@@ -8027,6 +8525,7 @@ void cFlood::getLoglikelihood(){
 		double curWaterProb, curDryProb, curMaxGain = 0;
 		vector<double> loglikelihood;
 		vector<int> mainBranchNodeIds;
+		vector<int> isNA;
 
 		double curGain = 0;
 
@@ -8065,14 +8564,14 @@ void cFlood::getLoglikelihood(){
 			}
 
 			if (data.allNodes[curNode]->parentsID.size() == 0) {
-				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho); // TODO: check this +/-
+				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + eln_ll(1 - parameter.rho); // TODO: check this +/-
 			}
 			else if (data.allNodes[curNode]->childrenID.size() == 0)
 			{
 				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi);
 			}
 			else {
-				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho);
+				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + eln_ll(1 - parameter.rho);
 			}
 			
 			if (data.allNodes[curNode]->parentsID.size() == 0){
@@ -8085,12 +8584,14 @@ void cFlood::getLoglikelihood(){
 			}
 
 			mainBranchNodeIds.push_back(curNode);
+			isNA.push_back(data.allNodes[curNode]->isNa);
 
 			curNode = data.allNodes[curNode]->childrenID[0];
 		}
 
 		data.loglikelihood_leftRegions.push_back(loglikelihood);
 		data.mainBranchNodeIds_leftRegions.push_back(mainBranchNodeIds);
+		data.isNa_leftRegions.push_back(isNA);
 	}
 
 	// Right Bank
@@ -8101,6 +8602,7 @@ void cFlood::getLoglikelihood(){
 		double curWaterProb, curDryProb,  curMaxGain = 0;
 		vector<double> loglikelihood;
 		vector<int> mainBranchNodeIds;
+		vector<int> isNA;
 
 		double curGain = 0;
 
@@ -8143,14 +8645,14 @@ void cFlood::getLoglikelihood(){
 			}
 
 			if (data.allNodes[curNode]->parentsID.size() == 0) {
-				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho); // TODO: check this +/-
+				curGain = curWaterProb - curDryProb - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + eln_ll(1 - parameter.rho); // TODO: check this +/-
 			}
 			else if (data.allNodes[curNode]->childrenID.size() == 0)
 			{
 				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi);
 			}
 			else {
-				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + ln(1 - parameter.rho);
+				curGain = curWaterProb - curDryProb + eln_ll(parameter.rho) - eln_ll(1 - parameter.rho) - eln_ll(parameter.Pi) + eln_ll(1 - parameter.Pi) + eln_ll(1 - parameter.rho);
 			}
 			
 			if (data.allNodes[curNode]->parentsID.size() == 0){
@@ -8163,12 +8665,14 @@ void cFlood::getLoglikelihood(){
 			}
 
 			mainBranchNodeIds.push_back(curNode);
+			isNA.push_back(data.allNodes[curNode]->isNa);
 
 			curNode = data.allNodes[curNode]->childrenID[0];
 		}
 
 		data.loglikelihood_rightRegions.push_back(loglikelihood);
 		data.mainBranchNodeIds_rightRegions.push_back(mainBranchNodeIds);
+		data.isNa_rightRegions.push_back(isNA);
 	}
 }
 
@@ -8196,8 +8700,8 @@ void cFlood::viterbi(){
 	double prev_lb, prev_ub = 0;
 
 	// Left Bank
-// 	for (int leftOrder = 0; leftOrder < data.leftNodesInCorrectOrder.size()-1; leftOrder++) {
-    for (int leftOrder = 0; leftOrder < 3; leftOrder++) {
+	for (int leftOrder = 10; leftOrder < data.leftNodesInCorrectOrder.size(); leftOrder++) {
+    // for (int leftOrder = 0; leftOrder < 3; leftOrder++) {
         
         double currRegionInferredCost = data.inferredFloodFrontier_regionId2Cost[data.leftNodesInCorrectOrder[leftOrder]];
         double nextRegionInferredCost = data.inferredFloodFrontier_regionId2Cost[data.leftNodesInCorrectOrder[leftOrder + 1]];
@@ -8224,12 +8728,16 @@ void cFlood::viterbi(){
 // 		cout << "next_ub: " << next_ub << " next_lb: " << next_lb << endl;
 
 		for (int j=0; j < llNextRegion.size(); j++){
+		    
+		    
 		    double nextCost = data.allNodes[data.mainBranchNodeIds_leftRegions[leftOrder + 1][j]]->cost;
 		    
-		  //  // pruning
-		  //  if ((nextCost > next_ub) || (nextCost < next_lb)){
-		  //      continue;
-		  //  }
+		    // pruning
+		    if ((nextCost > next_ub) || (nextCost < next_lb)){
+		        continue;
+		    }
+		    
+		    
 		    
 // 			vector<double> temp;
 // 			vector<int> tempPath;
@@ -8238,24 +8746,28 @@ void cFlood::viterbi(){
 			double curr_ub = min(prev_ub, max(currRegionInferredCost, nextRegionInferredCost));
 			double curr_lb = max(prev_lb, min(currRegionInferredCost, nextRegionInferredCost));
 			
-			if (leftOrder == 0){
+			if (leftOrder == 10){
 			    curr_ub = max(currRegionInferredCost, nextRegionInferredCost);
 			}
 			
 // 			cout << "curr_ub: " << curr_ub << " curr_lb: " << curr_lb << endl;
 
 			for (int k=0; k < llCurrRegion.size(); k++){
+			    
+		    
 				double currCost = data.allNodes[data.mainBranchNodeIds_leftRegions[leftOrder][k]]->cost;
 				
-				// // pruning
-				// if ((currCost > curr_ub) || (currCost < curr_lb)){
-				//     continue;
-				// }
+				// pruning
+				if ((currCost > curr_ub) || (currCost < curr_lb)){
+				    continue;
+				}
+				
+				
 				
 				// cout << "currCost: " << currCost <<  " k: " << k << endl;
 				
 				
-				if (leftOrder == 0){
+				if (leftOrder == 10){
 					loss = -llCurrRegion[k] + lambda * abs(currCost - nextCost);
 				}
 				else{
@@ -8267,10 +8779,20 @@ void cFlood::viterbi(){
 					tempBest = loss;
 					individualPath = k; // save the best route and remove all other routes
 				}
+				
+				// // Experiment: break if isNa node is found
+    // 		    if (data.isNa_leftRegions[leftOrder][k] == 1){
+    // 		        break;
+    // 		    }
 			}
 			temp.push_back(make_pair(tempBest, j));
 			tempPath.push_back(individualPath); // save the best route in one region
 			tempPathMap[j] = individualPath;
+			
+// 			// Experiment: break if isNa node is found
+// 		    if (data.isNa_leftRegions[leftOrder + 1][j] == 1){
+// 		        break;
+// 		    }
 		}
 		
 		prev_ub = next_ub;
@@ -8293,7 +8815,8 @@ void cFlood::viterbi(){
 	
 	// find frontier node (Start point) on last region
 	for (int i=0; i < delta.back().size(); i++){
-		if (delta.back().at(i).first > max_val){
+	    cout << delta.back().at(i).first << " ";
+		if (delta.back().at(i).first < max_val){ // TODO: < or >, we are comparing loss?
 			max_val = delta.back().at(i).first;
 			sta = i;
 		}
@@ -8304,33 +8827,50 @@ void cFlood::viterbi(){
 	data.result_ids_left.push_back(delta.back().at(sta).second);
 	cout << "sta corr: " << delta.back().at(sta).second << endl;
 
-// 	for (int leftOrder=0; leftOrder < data.leftNodesInCorrectOrder.size()-1; leftOrder++){
-    for (int leftOrder=0; leftOrder < 3; leftOrder++){
-// 		sta = path[data.leftNodesInCorrectOrder.size() - leftOrder - 1][sta];
+	for (int leftOrder=0; leftOrder < data.leftNodesInCorrectOrder.size(); leftOrder++){
+    // for (int leftOrder=0; leftOrder < 3; leftOrder++){
+        // if (leftOrder == 0){
+        //     sta = path[3 - leftOrder - 1][sta];
+        // }
+        // else{
+        //     sta = path_map[3 - leftOrder - 1][sta];
+        // }
+        
         if (leftOrder == 0){
-            sta = path[3 - leftOrder - 1][sta];
+            sta = path[data.leftNodesInCorrectOrder.size() - leftOrder - 1][sta];
         }
         else{
-            sta = path_map[3 - leftOrder - 1][sta];
+            sta = path_map[data.leftNodesInCorrectOrder.size() - leftOrder - 1][sta];
         }
-        // sta = path[2 - leftOrder - 1][sta];
-        cout << "leftOrder: " << leftOrder << " sta: " << sta << " path size: " << path[3-leftOrder-1].size() << endl;
+        
+        cout << "Here1" << endl;
+        cout << "leftOrder: " << leftOrder << endl;
+
+        cout << "leftOrder: " << leftOrder << " sta: " << sta << " path size: " << path[data.leftNodesInCorrectOrder.size()-leftOrder-1].size() << endl;
 		data.result_ids_left.push_back(sta);
 	}
 	reverse(data.result_ids_left.begin(), data.result_ids_left.end());
+	
+	// for later
+	data.regularizedMaxCostLeft.resize(data.leftNodesInOrder.size(), -1);
+	data.regularizedMaxCostRight.resize(data.rightNodesInOrder.size(), -1);
 	
 	
 	// display the result
 	cout << "#######################" << endl;
 	cout << "Left Bank Regions: " << endl;
-// 	for (int lOrder=0; lOrder < data.leftNodesInCorrectOrder.size(); lOrder++){
-    for (int lOrder=0; lOrder < 4; lOrder++){
+	for (int lOrder=0; lOrder < data.leftNodesInCorrectOrder.size(); lOrder++){
+    // for (int lOrder=0; lOrder < 4; lOrder++){
 	    int region_id = data.leftNodesInCorrectOrder[lOrder];
 	    int frontier_node_idx = data.result_ids_left[lOrder];
 	    cout << "frontier node idx: " << frontier_node_idx << endl;
 	    cout << "main branch size: " << data.mainBranchNodeIds_leftRegions[lOrder].size()  << "node id: " << data.mainBranchNodeIds_leftRegions[lOrder][frontier_node_idx] << endl;
 	    double regularized_cost = data.allNodes[data.mainBranchNodeIds_leftRegions[lOrder][frontier_node_idx]]->cost;
 	    cout << "Region Id: " << region_id << " Regularized Cost: " << regularized_cost << endl;
+	    
+	    // for later
+	    int original_order = data.leftSelected2AllOrder[lOrder];
+	    data.regularizedMaxCostLeft[original_order] = regularized_cost;
 	    
 	}
 }
@@ -8528,6 +9068,103 @@ void cFlood::viterbi(){
 	    
 // // 	}
 // }
+
+void cFlood::adjacentRegions(){
+    // map<int, vector<int>> adjacent_regions;
+    for (int leftOrder=0; leftOrder < data.leftbfsOrder.size(); leftOrder++){
+        if (!data.hasObservedPixelsLeft[leftOrder] || data.leftbfsOrder[leftOrder].size() < PIXELLIMT){
+            continue;
+        }
+        
+        int currRegionId = data.leftNodesInOrder[leftOrder];
+        
+    	set<int> adjacentRegion;
+    	
+		//step 1: get list of leaf nodes
+		for (int i = 0; i < data.leftbfsOrder[leftOrder].size(); i++) {
+		    
+			int nodeId = data.leftbfsOrder[leftOrder][i];
+			int origId = data.allNodes[nodeId]->originalId;
+// 			if (data.allNodes[nodeId]->parentsID.size() == 0) {
+			    int row = (int)(origId / parameter.COLUMN);
+			    int col = origId % parameter.COLUMN;
+			    
+			    for (int j=-1; j<2; j++){
+			        for (int k=-1; k<2; k++){
+			            if (j == k == 0){
+			                continue;
+			            }
+			            
+			            int row_nei = row + j;
+			            int col_nei = col + k;
+			            
+			            if (row_nei < 0 || col_nei < 0 || row_nei >= parameter.ROW || col_nei >= parameter.COLUMN){
+			                continue;
+			            }
+			            
+			            int neighNodeIdOrig = row_nei * parameter.COLUMN + col_nei;
+			            int neighNodeId = nodeIndexMap[neighNodeIdOrig];
+			            int neighRegionId = data.region_map[row_nei][col_nei];
+			            
+			            if ((neighRegionId != currRegionId) && (data.leftRegionSize[neighRegionId] >= PIXELLIMT)){ // TODO: change it to find
+			                adjacentRegion.insert(neighRegionId);
+			            }
+			        }
+			    }
+// 			}
+		}
+		data.adjacent_regions.insert(make_pair(currRegionId, adjacentRegion));
+    }
+    
+    for (auto const& x : data.adjacent_regions){
+        std::cout << "REGION ID: " << x.first << endl;  // string (key)
+        cout << "ADJACENT REGIONS: ";
+        for (auto s: x.second){
+            cout << s << ", ";
+        }
+        cout << endl;
+    }
+    
+    cout << endl << "MAIN CHAIN" << endl;
+    
+    vector<int> leftRegionsMainChain;
+    leftRegionsMainChain.push_back(data.leftNodesInCorrectOrder[0]);
+    
+    cout << "B1" << endl;
+    
+    int currRegion = data.leftNodesInCorrectOrder[0];
+    int nextRegion = data.leftNodesInCorrectOrder[1];
+    
+    cout << data.leftNodesInCorrectOrder[0] << endl;
+    int leftOrder = 0;
+    
+    // for (int leftOrder=0; leftOrder < data.leftNodesInCorrectOrder.size()-1; leftOrder++){
+    
+    while(leftOrder < data.leftNodesInCorrectOrder.size()-1){
+        set<int> adj_regions = data.adjacent_regions[currRegion];
+        if (adj_regions.find(nextRegion) != adj_regions.end()){
+            if (std::find(leftRegionsMainChain.begin(), leftRegionsMainChain.end(), nextRegion) == leftRegionsMainChain.end()){
+                leftRegionsMainChain.push_back(nextRegion);
+                cout << "next1: " << nextRegion << endl;
+                currRegion = nextRegion;
+                nextRegion = data.leftNodesInCorrectOrder[leftOrder+1];
+            }
+            leftOrder++;
+        }
+        else{
+            for (auto s: adj_regions){
+                if (std::find(leftRegionsMainChain.begin(), leftRegionsMainChain.end(), s) == leftRegionsMainChain.end()){
+                    leftRegionsMainChain.push_back(s);
+                    cout << "next2: " << s << endl;
+                    currRegion = s;
+                    auto pos = std::find(data.leftNodesInCorrectOrder.begin(), data.leftNodesInCorrectOrder.end(), s);
+                    nextRegion = *++pos;
+                    break;
+                }
+            }
+        }
+    }
+}
 
 
 
